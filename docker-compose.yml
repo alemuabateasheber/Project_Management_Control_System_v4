@@ -1,0 +1,68 @@
+services:
+  db:
+    image: postgres:17
+    environment:
+      POSTGRES_DB: mint_aics_pmo
+      POSTGRES_USER: mint
+      POSTGRES_PASSWORD: mint
+    volumes: [postgres_data:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mint -d mint_aics_pmo"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+  api:
+    build: ./backend
+    env_file: .env
+    depends_on:
+      db: {condition: service_healthy}
+    ports: ["8001:8000"]
+    volumes: [reports:/app/reports]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
+        reservations:
+          cpus: '0.5'
+          memory: 256M
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile.web
+    depends_on: [api]
+    ports: ["8081:80"]
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+        reservations:
+          cpus: '0.25'
+          memory: 128M
+volumes:
+  postgres_data:
+  reports:
