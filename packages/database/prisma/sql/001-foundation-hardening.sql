@@ -85,6 +85,9 @@ BEGIN
     'budget_versions', 'budget_line_items', 'cost_transactions',
     'cost_transaction_lines', 'commitments', 'forecast_versions',
     'forecast_line_items', 'evm_snapshots', 'audit_events', 'outbox_events'
+    , 'funds', 'transaction_categories', 'financial_transactions',
+    'ledger_entries', 'fund_transfers', 'currency_conversions', 'budgets',
+    'budget_alert_rules'
   ] LOOP
     IF EXISTS (
       SELECT 1
@@ -133,7 +136,7 @@ DECLARE
 BEGIN
   FOREACH table_name IN ARRAY ARRAY[
     'audit_events', 'baseline_wbs_items', 'baseline_tasks',
-    'baseline_milestones', 'cost_transaction_lines'
+    'baseline_milestones', 'cost_transaction_lines', 'ledger_entries'
   ] LOOP
     IF to_regclass('pmcs.' || table_name) IS NOT NULL THEN
       EXECUTE format('DROP TRIGGER IF EXISTS %I ON pmcs.%I', table_name || '_immutable', table_name);
@@ -146,6 +149,26 @@ BEGIN
   END LOOP;
 END;
 $$;
+
+CREATE OR REPLACE FUNCTION pmcs.reject_completed_financial_mutation()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    IF TG_OP = 'DELETE'
+      OR OLD.status = 'reversed'
+      OR (OLD.status = 'completed' AND NEW.status <> 'reversed') THEN
+    RAISE EXCEPTION 'Completed financial transaction is immutable: %', OLD.id
+      USING ERRCODE = '55006';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS financial_transactions_immutable ON pmcs.financial_transactions;
+CREATE TRIGGER financial_transactions_immutable
+BEFORE UPDATE OR DELETE ON pmcs.financial_transactions
+FOR EACH ROW EXECUTE FUNCTION pmcs.reject_completed_financial_mutation();
 
 DO $$
 BEGIN
@@ -187,6 +210,78 @@ BEGIN
     ALTER TABLE pmcs.commitments ADD CONSTRAINT commitments_amounts_nonnegative CHECK (
       committed_amount >= 0
       AND (released_amount IS NULL OR released_amount >= 0)
+    );
+  END IF;
+END;
+$$;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'funds_supported_currency') THEN
+    ALTER TABLE pmcs.funds ADD CONSTRAINT funds_supported_currency CHECK (currency IN ('EUR', 'ETB'));
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'funds_balances_nonnegative') THEN
+    ALTER TABLE pmcs.funds ADD CONSTRAINT funds_balances_nonnegative CHECK (
+      opening_balance >= 0 AND (allow_overdraft OR current_balance >= 0)
+    );
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'ledger_entries_supported_currency') THEN
+    ALTER TABLE pmcs.ledger_entries ADD CONSTRAINT ledger_entries_supported_currency CHECK (currency IN ('EUR', 'ETB'));
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'ledger_entries_positive_amount') THEN
+    ALTER TABLE pmcs.ledger_entries ADD CONSTRAINT ledger_entries_positive_amount CHECK (amount > 0);
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'ledger_entries_direction') THEN
+    ALTER TABLE pmcs.ledger_entries ADD CONSTRAINT ledger_entries_direction CHECK (direction IN ('DEBIT', 'CREDIT'));
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'ledger_entries_role') THEN
+    ALTER TABLE pmcs.ledger_entries ADD CONSTRAINT ledger_entries_role CHECK (entry_role IN ('FUND', 'OFFSET'));
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'ledger_entries_balance_by_role') THEN
+    ALTER TABLE pmcs.ledger_entries ADD CONSTRAINT ledger_entries_balance_by_role CHECK (
+      (entry_role = 'FUND' AND fund_id IS NOT NULL AND balance_before IS NOT NULL AND balance_after IS NOT NULL)
+      OR (entry_role = 'OFFSET' AND fund_id IS NULL AND balance_before IS NULL AND balance_after IS NULL)
+    );
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'financial_transactions_type') THEN
+    ALTER TABLE pmcs.financial_transactions ADD CONSTRAINT financial_transactions_type CHECK (
+      transaction_type IN ('INCOME', 'EXPENSE', 'FUND_TRANSFER', 'CURRENCY_CONVERSION', 'ADJUSTMENT', 'REFUND', 'REVERSAL')
+    );
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'financial_transactions_status') THEN
+    ALTER TABLE pmcs.financial_transactions ADD CONSTRAINT financial_transactions_status CHECK (
+      status IN ('DRAFT', 'PENDING', 'APPROVED', 'COMPLETED', 'CANCELLED', 'REVERSED')
+    );
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fund_transfers_positive_values') THEN
+    ALTER TABLE pmcs.fund_transfers ADD CONSTRAINT fund_transfers_positive_values CHECK (
+      source_amount > 0 AND destination_amount > 0 AND fee >= 0
+      AND (exchange_rate IS NULL OR exchange_rate > 0)
+    );
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fund_transfers_distinct_funds') THEN
+    ALTER TABLE pmcs.fund_transfers ADD CONSTRAINT fund_transfers_distinct_funds CHECK (source_fund_id <> destination_fund_id);
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'currency_conversions_positive_values') THEN
+    ALTER TABLE pmcs.currency_conversions ADD CONSTRAINT currency_conversions_positive_values CHECK (
+      source_amount > 0 AND destination_amount > 0 AND exchange_rate > 0
+      AND conversion_fee >= 0 AND total_source_cost >= source_amount
+    );
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'currency_conversions_distinct_currencies') THEN
+    ALTER TABLE pmcs.currency_conversions ADD CONSTRAINT currency_conversions_distinct_currencies CHECK (
+      source_currency <> destination_currency
+    );
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'budgets_positive_amount') THEN
+    ALTER TABLE pmcs.budgets ADD CONSTRAINT budgets_positive_amount CHECK (budget_amount > 0);
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'budgets_date_order') THEN
+    ALTER TABLE pmcs.budgets ADD CONSTRAINT budgets_date_order CHECK (start_date <= end_date);
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'budget_alert_rules_threshold') THEN
+    ALTER TABLE pmcs.budget_alert_rules ADD CONSTRAINT budget_alert_rules_threshold CHECK (
+      threshold_percent > 0 AND threshold_percent <= 100
     );
   END IF;
 END;

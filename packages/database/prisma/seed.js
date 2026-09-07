@@ -9,6 +9,13 @@ const permissionDefinitions = [
   ['project:create', 'Create projects'],
   ['project:update', 'Update projects'],
   ['project:manage_members', 'Manage project membership'],
+  ['fund:read', 'View fund balances'],
+  ['transaction:read', 'View financial transactions'],
+  ['transaction:create', 'Create and complete financial transactions'],
+  ['transaction:reverse', 'Reverse completed financial transactions'],
+  ['budget:read', 'View budgets and utilization'],
+  ['budget:manage', 'Manage budgets and budget alerts'],
+  ['report:export', 'Export financial reports'],
   ['audit:read', 'View audit events'],
 ];
 

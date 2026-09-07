@@ -130,19 +130,27 @@ model Organization {
   createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt       DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  departments  Department[]
-  locations    Location[]
-  teams        Team[]
-  memberships  OrganizationMembership[]
-  roles        Role[]
-  portfolios   Portfolio[]
-  projects     Project[]
-  resources    Resource[]
-  wbsItems     WbsItem[]
-  tasks        Task[]
-  baselines    Baseline[]
-  auditEvents  AuditEvent[]
-  outboxEvents OutboxEvent[]
+  departments           Department[]
+  locations             Location[]
+  teams                 Team[]
+  memberships           OrganizationMembership[]
+  roles                 Role[]
+  portfolios            Portfolio[]
+  projects              Project[]
+  resources             Resource[]
+  wbsItems              WbsItem[]
+  tasks                 Task[]
+  baselines             Baseline[]
+  funds                 Fund[]
+  transactionCategories TransactionCategory[]
+  financialTransactions FinancialTransaction[]
+  budgets               Budget[]
+  budgetAlertRules      BudgetAlertRule[]
+  auditEvents           AuditEvent[]
+  outboxEvents          OutboxEvent[]
+  LedgerEntry           LedgerEntry[]
+  FundTransfer          FundTransfer[]
+  CurrencyConversion    CurrencyConversion[]
 
   @@index([status], map: "organizations_status_idx")
   @@map("organizations")
@@ -224,28 +232,35 @@ model OrganizationMembership {
   createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt      DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  organization      Organization         @relation(fields: [organizationId], references: [id], onDelete: Restrict)
-  user              User                 @relation(fields: [userId], references: [id], onDelete: Restrict)
-  department        Department?          @relation(fields: [organizationId, departmentId], references: [organizationId, id], onDelete: Restrict)
-  membershipRoles   MembershipRole[]
-  teamMemberships   TeamMembership[]
-  projectMembers    ProjectMember[]
-  resource          Resource?            @relation("ResourceMembership")
-  sponsoredProjects Project[]            @relation("ProjectSponsor")
-  managedProjects   Project[]            @relation("ProjectManager")
-  ownedPortfolios   Portfolio[]          @relation("PortfolioOwner")
-  ownedWbsItems     WbsItem[]            @relation("WbsOwner")
-  ownedTasks        Task[]               @relation("TaskOwner")
-  ownedMilestones   Milestone[]          @relation("MilestoneOwner")
-  reportedProgress  TaskProgressUpdate[] @relation("ProgressReporter")
-  createdBaselines  Baseline[]           @relation("BaselineCreator")
-  frozenBaselines   Baseline[]           @relation("BaselineFreezer")
-  approvedBaselines Baseline[]           @relation("BaselineApprover")
-  budgetVersions    BudgetVersion[]      @relation("BudgetVersionCreator")
-  costTransactions  CostTransaction[]    @relation("CostTransactionCreator")
-  commitments       Commitment[]         @relation("CommitmentCreator")
-  forecastVersions  ForecastVersion[]    @relation("ForecastVersionCreator")
-  auditEvents       AuditEvent[]         @relation("AuditActorMembership")
+  organization                  Organization           @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  user                          User                   @relation(fields: [userId], references: [id], onDelete: Restrict)
+  department                    Department?            @relation(fields: [organizationId, departmentId], references: [organizationId, id], onDelete: Restrict)
+  membershipRoles               MembershipRole[]
+  teamMemberships               TeamMembership[]
+  projectMembers                ProjectMember[]
+  resource                      Resource?              @relation("ResourceMembership")
+  sponsoredProjects             Project[]              @relation("ProjectSponsor")
+  managedProjects               Project[]              @relation("ProjectManager")
+  ownedPortfolios               Portfolio[]            @relation("PortfolioOwner")
+  ownedWbsItems                 WbsItem[]              @relation("WbsOwner")
+  ownedTasks                    Task[]                 @relation("TaskOwner")
+  ownedMilestones               Milestone[]            @relation("MilestoneOwner")
+  reportedProgress              TaskProgressUpdate[]   @relation("ProgressReporter")
+  createdBaselines              Baseline[]             @relation("BaselineCreator")
+  frozenBaselines               Baseline[]             @relation("BaselineFreezer")
+  approvedBaselines             Baseline[]             @relation("BaselineApprover")
+  budgetVersions                BudgetVersion[]        @relation("BudgetVersionCreator")
+  costTransactions              CostTransaction[]      @relation("CostTransactionCreator")
+  commitments                   Commitment[]           @relation("CommitmentCreator")
+  forecastVersions              ForecastVersion[]      @relation("ForecastVersionCreator")
+  createdFunds                  Fund[]                 @relation("FundCreator")
+  createdCategories             TransactionCategory[]  @relation("CategoryCreator")
+  createdFinancialTransactions  FinancialTransaction[] @relation("FinancialTransactionCreator")
+  approvedFinancialTransactions FinancialTransaction[] @relation("FinancialTransactionApprover")
+  createdBudgets                Budget[]               @relation("BudgetCreator")
+  createdTransfers              FundTransfer[]         @relation("TransferCreator")
+  createdConversions            CurrencyConversion[]   @relation("ConversionCreator")
+  auditEvents                   AuditEvent[]           @relation("AuditActorMembership")
 
   @@unique([organizationId, id], map: "organization_memberships_org_id_id_key")
   @@unique([organizationId, userId], map: "organization_memberships_org_user_key")
@@ -389,25 +404,28 @@ model Project {
   createdAt           DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt           DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  organization        Organization            @relation(fields: [organizationId], references: [id], onDelete: Restrict)
-  portfolio           Portfolio?              @relation(fields: [organizationId, portfolioId], references: [organizationId, id], onDelete: Restrict)
-  sponsor             OrganizationMembership? @relation("ProjectSponsor", fields: [organizationId, sponsorMembershipId], references: [organizationId, id], onDelete: Restrict)
-  manager             OrganizationMembership? @relation("ProjectManager", fields: [organizationId, managerMembershipId], references: [organizationId, id], onDelete: Restrict)
-  members             ProjectMember[]
-  phases              ProjectPhase[]
-  healthSnapshots     ProjectHealthSnapshot[]
-  wbsItems            WbsItem[]
-  tasks               Task[]
-  taskDependencies    TaskDependency[]
-  taskAssignments     TaskAssignment[]
-  taskProgressUpdates TaskProgressUpdate[]
-  milestones          Milestone[]
-  baselines           Baseline[]
-  budgetVersions      BudgetVersion[]
-  costTransactions    CostTransaction[]
-  commitments         Commitment[]
-  forecastVersions    ForecastVersion[]
-  evmSnapshots        EvmSnapshot[]
+  organization          Organization            @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  portfolio             Portfolio?              @relation(fields: [organizationId, portfolioId], references: [organizationId, id], onDelete: Restrict)
+  sponsor               OrganizationMembership? @relation("ProjectSponsor", fields: [organizationId, sponsorMembershipId], references: [organizationId, id], onDelete: Restrict)
+  manager               OrganizationMembership? @relation("ProjectManager", fields: [organizationId, managerMembershipId], references: [organizationId, id], onDelete: Restrict)
+  members               ProjectMember[]
+  phases                ProjectPhase[]
+  healthSnapshots       ProjectHealthSnapshot[]
+  wbsItems              WbsItem[]
+  tasks                 Task[]
+  taskDependencies      TaskDependency[]
+  taskAssignments       TaskAssignment[]
+  taskProgressUpdates   TaskProgressUpdate[]
+  milestones            Milestone[]
+  baselines             Baseline[]
+  budgetVersions        BudgetVersion[]
+  costTransactions      CostTransaction[]
+  commitments           Commitment[]
+  forecastVersions      ForecastVersion[]
+  evmSnapshots          EvmSnapshot[]
+  financialTransactions FinancialTransaction[]
+  budgets               Budget[]
+  LedgerEntry           LedgerEntry[]
 
   @@unique([organizationId, id], map: "projects_organization_id_id_key")
   @@unique([organizationId, code], map: "projects_organization_code_key")
@@ -1004,6 +1022,240 @@ model EvmSnapshot {
   @@unique([organizationId, projectId, reportingDate, ruleVersion], map: "evm_snapshots_org_project_date_rule_key")
   @@index([organizationId, projectId, reportingDate(sort: Desc)], map: "evm_snapshots_org_project_date_idx")
   @@map("evm_snapshots")
+  @@schema("pmcs")
+}
+
+// ---------------------------------------------------------------------------
+// Authoritative financial ledger. Project cost tables above remain available
+// for EVM/reporting compatibility; these models own fund balances and money
+// movements. Completed records are append-only and corrected by reversal.
+// ---------------------------------------------------------------------------
+
+model Fund {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId String   @map("organization_id") @db.Uuid
+  createdById    String   @map("created_by_id") @db.Uuid
+  code           String   @db.VarChar(64)
+  name           String   @db.VarChar(200)
+  currency       String   @db.Char(3)
+  openingBalance Decimal  @map("opening_balance") @db.Decimal(19, 4)
+  currentBalance Decimal  @map("current_balance") @db.Decimal(19, 4)
+  allowOverdraft Boolean  @default(false) @map("allow_overdraft")
+  status         String   @default("active") @db.VarChar(32)
+  version        Int      @default(1)
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  organization           Organization           @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  createdBy              OrganizationMembership @relation("FundCreator", fields: [organizationId, createdById], references: [organizationId, id], onDelete: Restrict)
+  ledgerEntries          LedgerEntry[]
+  sourceTransfers        FundTransfer[]         @relation("TransferSourceFund")
+  destinationTransfers   FundTransfer[]         @relation("TransferDestinationFund")
+  sourceConversions      CurrencyConversion[]   @relation("ConversionSourceFund")
+  destinationConversions CurrencyConversion[]   @relation("ConversionDestinationFund")
+  budgets                Budget[]
+
+  @@unique([organizationId, id], map: "funds_org_id_id_key")
+  @@unique([organizationId, code], map: "funds_org_code_key")
+  @@index([organizationId, currency, status], map: "funds_org_currency_status_idx")
+  @@map("funds")
+  @@schema("pmcs")
+}
+
+model TransactionCategory {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId String   @map("organization_id") @db.Uuid
+  createdById    String   @map("created_by_id") @db.Uuid
+  code           String   @db.VarChar(64)
+  name           String   @db.VarChar(200)
+  status         String   @default("active") @db.VarChar(32)
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  organization  Organization           @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  createdBy     OrganizationMembership @relation("CategoryCreator", fields: [organizationId, createdById], references: [organizationId, id], onDelete: Restrict)
+  transactions  FinancialTransaction[]
+  budgets       Budget[]
+  ledgerEntries LedgerEntry[]
+
+  @@unique([organizationId, id], map: "transaction_categories_org_id_id_key")
+  @@unique([organizationId, code], map: "transaction_categories_org_code_key")
+  @@index([organizationId, status], map: "transaction_categories_org_status_idx")
+  @@map("transaction_categories")
+  @@schema("pmcs")
+}
+
+model FinancialTransaction {
+  id                      String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId          String    @map("organization_id") @db.Uuid
+  transactionNumber       String    @map("transaction_number") @db.VarChar(80)
+  transactionDate         DateTime  @map("transaction_date") @db.Date
+  transactionType         String    @map("transaction_type") @db.VarChar(32)
+  status                  String    @default("draft") @db.VarChar(32)
+  reference               String?   @db.VarChar(256)
+  description             String?
+  projectId               String?   @map("project_id") @db.Uuid
+  categoryId              String?   @map("category_id") @db.Uuid
+  createdById             String    @map("created_by_id") @db.Uuid
+  approvedById            String?   @map("approved_by_id") @db.Uuid
+  completedAt             DateTime? @map("completed_at") @db.Timestamptz(6)
+  reversalOfTransactionId String?   @map("reversal_of_transaction_id") @db.Uuid
+  createdAt               DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt               DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  organization Organization            @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  project      Project?                @relation(fields: [organizationId, projectId], references: [organizationId, id], onDelete: Restrict)
+  category     TransactionCategory?    @relation(fields: [organizationId, categoryId], references: [organizationId, id], onDelete: Restrict)
+  createdBy    OrganizationMembership  @relation("FinancialTransactionCreator", fields: [organizationId, createdById], references: [organizationId, id], onDelete: Restrict)
+  approvedBy   OrganizationMembership? @relation("FinancialTransactionApprover", fields: [organizationId, approvedById], references: [organizationId, id], onDelete: Restrict)
+  reversalOf   FinancialTransaction?   @relation("FinancialTransactionReversal", fields: [organizationId, reversalOfTransactionId], references: [organizationId, id], onDelete: Restrict)
+  reversals    FinancialTransaction[]  @relation("FinancialTransactionReversal")
+  entries      LedgerEntry[]
+  transfer     FundTransfer?
+  conversion   CurrencyConversion?
+
+  @@unique([organizationId, id], map: "financial_transactions_org_id_id_key")
+  @@unique([organizationId, transactionNumber], map: "financial_transactions_org_number_key")
+  @@index([organizationId, transactionDate, status], map: "financial_transactions_org_date_status_idx")
+  @@index([organizationId, transactionType, status], map: "financial_transactions_org_type_status_idx")
+  @@map("financial_transactions")
+  @@schema("pmcs")
+}
+
+model LedgerEntry {
+  id               String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId   String   @map("organization_id") @db.Uuid
+  transactionId    String   @map("transaction_id") @db.Uuid
+  fundId           String?  @map("fund_id") @db.Uuid
+  currency         String   @db.Char(3)
+  entryRole        String   @default("FUND") @map("entry_role") @db.VarChar(16)
+  direction        String   @db.VarChar(16)
+  amount           Decimal  @db.Decimal(19, 4)
+  balanceBefore    Decimal? @map("balance_before") @db.Decimal(19, 4)
+  balanceAfter     Decimal? @map("balance_after") @db.Decimal(19, 4)
+  counterpartyCode String?  @map("counterparty_code") @db.VarChar(128)
+  categoryId       String?  @map("category_id") @db.Uuid
+  projectId        String?  @map("project_id") @db.Uuid
+  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  organization Organization         @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  transaction  FinancialTransaction @relation(fields: [organizationId, transactionId], references: [organizationId, id], onDelete: Restrict)
+  fund         Fund?                @relation(fields: [organizationId, fundId], references: [organizationId, id], onDelete: Restrict)
+  category     TransactionCategory? @relation(fields: [organizationId, categoryId], references: [organizationId, id], onDelete: Restrict)
+  project      Project?             @relation(fields: [organizationId, projectId], references: [organizationId, id], onDelete: Restrict)
+
+  @@unique([organizationId, id], map: "ledger_entries_org_id_id_key")
+  @@index([organizationId, fundId, createdAt], map: "ledger_entries_org_fund_created_idx")
+  @@index([organizationId, transactionId], map: "ledger_entries_org_transaction_idx")
+  @@index([organizationId, currency, direction, createdAt], map: "ledger_entries_org_currency_direction_idx")
+  @@map("ledger_entries")
+  @@schema("pmcs")
+}
+
+model FundTransfer {
+  id                  String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId      String   @map("organization_id") @db.Uuid
+  transactionId       String   @unique @map("transaction_id") @db.Uuid
+  sourceFundId        String   @map("source_fund_id") @db.Uuid
+  destinationFundId   String   @map("destination_fund_id") @db.Uuid
+  sourceCurrency      String   @map("source_currency") @db.Char(3)
+  destinationCurrency String   @map("destination_currency") @db.Char(3)
+  sourceAmount        Decimal  @map("source_amount") @db.Decimal(19, 4)
+  destinationAmount   Decimal  @map("destination_amount") @db.Decimal(19, 4)
+  exchangeRate        Decimal? @map("exchange_rate") @db.Decimal(18, 8)
+  fee                 Decimal  @default(0) @db.Decimal(19, 4)
+  status              String   @default("draft") @db.VarChar(32)
+  createdById         String   @map("created_by_id") @db.Uuid
+  createdAt           DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  organization    Organization           @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  transaction     FinancialTransaction   @relation(fields: [organizationId, transactionId], references: [organizationId, id], onDelete: Restrict)
+  createdBy       OrganizationMembership @relation("TransferCreator", fields: [organizationId, createdById], references: [organizationId, id], onDelete: Restrict)
+  sourceFund      Fund                   @relation("TransferSourceFund", fields: [organizationId, sourceFundId], references: [organizationId, id], onDelete: Restrict)
+  destinationFund Fund                   @relation("TransferDestinationFund", fields: [organizationId, destinationFundId], references: [organizationId, id], onDelete: Restrict)
+
+  @@unique([organizationId, id], map: "fund_transfers_org_id_id_key")
+  @@unique([organizationId, transactionId], map: "fund_transfers_org_transaction_key")
+  @@index([organizationId, sourceFundId, createdAt], map: "fund_transfers_org_source_created_idx")
+  @@index([organizationId, destinationFundId, createdAt], map: "fund_transfers_org_destination_created_idx")
+  @@map("fund_transfers")
+  @@schema("pmcs")
+}
+
+model CurrencyConversion {
+  id                  String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId      String   @map("organization_id") @db.Uuid
+  transactionId       String   @unique @map("transaction_id") @db.Uuid
+  sourceFundId        String   @map("source_fund_id") @db.Uuid
+  destinationFundId   String   @map("destination_fund_id") @db.Uuid
+  conversionDate      DateTime @map("conversion_date") @db.Date
+  sourceCurrency      String   @map("source_currency") @db.Char(3)
+  destinationCurrency String   @map("destination_currency") @db.Char(3)
+  sourceAmount        Decimal  @map("source_amount") @db.Decimal(19, 4)
+  exchangeRate        Decimal  @map("exchange_rate") @db.Decimal(18, 8)
+  destinationAmount   Decimal  @map("destination_amount") @db.Decimal(19, 4)
+  conversionFee       Decimal  @default(0) @map("conversion_fee") @db.Decimal(19, 4)
+  totalSourceCost     Decimal  @map("total_source_cost") @db.Decimal(19, 4)
+  status              String   @default("draft") @db.VarChar(32)
+  createdById         String   @map("created_by_id") @db.Uuid
+  createdAt           DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  organization    Organization           @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  transaction     FinancialTransaction   @relation(fields: [organizationId, transactionId], references: [organizationId, id], onDelete: Restrict)
+  createdBy       OrganizationMembership @relation("ConversionCreator", fields: [organizationId, createdById], references: [organizationId, id], onDelete: Restrict)
+  sourceFund      Fund                   @relation("ConversionSourceFund", fields: [organizationId, sourceFundId], references: [organizationId, id], onDelete: Restrict)
+  destinationFund Fund                   @relation("ConversionDestinationFund", fields: [organizationId, destinationFundId], references: [organizationId, id], onDelete: Restrict)
+
+  @@unique([organizationId, id], map: "currency_conversions_org_id_id_key")
+  @@unique([organizationId, transactionId], map: "currency_conversions_org_transaction_key")
+  @@index([organizationId, conversionDate, sourceCurrency, destinationCurrency], map: "currency_conversions_org_date_currency_idx")
+  @@map("currency_conversions")
+  @@schema("pmcs")
+}
+
+model Budget {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId String   @map("organization_id") @db.Uuid
+  createdById    String   @map("created_by_id") @db.Uuid
+  name           String   @db.VarChar(200)
+  categoryId     String?  @map("category_id") @db.Uuid
+  fundId         String?  @map("fund_id") @db.Uuid
+  projectId      String?  @map("project_id") @db.Uuid
+  currency       String   @db.Char(3)
+  budgetAmount   Decimal  @map("budget_amount") @db.Decimal(19, 4)
+  startDate      DateTime @map("start_date") @db.Date
+  endDate        DateTime @map("end_date") @db.Date
+  status         String   @default("draft") @db.VarChar(32)
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  organization Organization           @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  createdBy    OrganizationMembership @relation("BudgetCreator", fields: [organizationId, createdById], references: [organizationId, id], onDelete: Restrict)
+  category     TransactionCategory?   @relation(fields: [organizationId, categoryId], references: [organizationId, id], onDelete: Restrict)
+  fund         Fund?                  @relation(fields: [organizationId, fundId], references: [organizationId, id], onDelete: Restrict)
+  project      Project?               @relation(fields: [organizationId, projectId], references: [organizationId, id], onDelete: Restrict)
+
+  @@unique([organizationId, id], map: "budgets_org_id_id_key")
+  @@index([organizationId, currency, status, startDate, endDate], map: "budgets_org_currency_status_dates_idx")
+  @@index([organizationId, projectId, status], map: "budgets_org_project_status_idx")
+  @@map("budgets")
+  @@schema("pmcs")
+}
+
+model BudgetAlertRule {
+  id               String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId   String   @map("organization_id") @db.Uuid
+  thresholdPercent Decimal  @map("threshold_percent") @db.Decimal(5, 2)
+  severity         String   @db.VarChar(32)
+  enabled          Boolean  @default(true)
+  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+
+  @@unique([organizationId, thresholdPercent], map: "budget_alert_rules_org_threshold_key")
+  @@index([organizationId, enabled, thresholdPercent], map: "budget_alert_rules_org_enabled_threshold_idx")
+  @@map("budget_alert_rules")
   @@schema("pmcs")
 }
 
