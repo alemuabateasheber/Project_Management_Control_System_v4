@@ -1,0 +1,48 @@
+{
+  "name": "@pmcs/database",
+  "version": "0.1.0",
+  "private": true,
+  "description": "PMCS Prisma schema, migrations contract, and tenant-aware Prisma client wrapper.",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "require": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./client": {
+      "types": "./dist/client.d.ts",
+      "require": "./dist/client.js",
+      "default": "./dist/client.js"
+    },
+    "./schema": "./prisma/schema.prisma"
+  },
+  "files": [
+    "dist",
+    "prisma",
+    "src",
+    "README.md",
+    ".env.example"
+  ],
+  "scripts": {
+    "build": "npm run generate && tsc --project tsconfig.json",
+    "generate": "prisma generate --schema prisma/schema.prisma",
+    "validate": "prisma validate --schema prisma/schema.prisma",
+    "format": "prisma format --schema prisma/schema.prisma",
+    "migrate:dev": "prisma migrate dev --schema prisma/schema.prisma",
+    "migrate:deploy": "prisma migrate deploy --schema prisma/schema.prisma",
+    "studio": "prisma studio --schema prisma/schema.prisma"
+  },
+  "dependencies": {
+    "@prisma/client": "6.16.2"
+  },
+  "devDependencies": {
+    "@types/node": "22.15.3",
+    "prisma": "6.16.2",
+    "typescript": "5.8.3"
+  },
+  "engines": {
+    "node": ">=20.19.0"
+  }
+}

@@ -1,0 +1,505 @@
+// PMCS target data foundation. This schema owns only the isolated `pmcs`
+// PostgreSQL namespace; it intentionally has no Prisma models for the legacy
+// `public` schema.
+//
+// PostgreSQL checks, RLS policies, append-only triggers, and extensions live
+// in prisma/sql/001-foundation-hardening.sql because Prisma cannot express
+// those database protections directly.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+  schemas  = ["pmcs"]
+}
+
+// ---------------------------------------------------------------------------
+// Global identity. These records deliberately have no organization_id: one
+// human identity may be a member of multiple organizations.
+// ---------------------------------------------------------------------------
+
+model User {
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  displayName String    @map("display_name") @db.VarChar(200)
+  status      String    @default("active") @db.VarChar(32)
+  lastLoginAt DateTime? @map("last_login_at") @db.Timestamptz(6)
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  identities              UserIdentity[]
+  passwordCredential      PasswordCredential?
+  authSessions            AuthSession[]
+  mfaFactors              MfaFactor[]
+  organizationMemberships OrganizationMembership[]
+  auditEvents             AuditEvent[] @relation("AuditActorUser")
+
+  @@index([status], map: "users_status_idx")
+  @@map("users")
+  @@schema("pmcs")
+}
+
+model UserIdentity {
+  id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId          String    @map("user_id") @db.Uuid
+  provider        String    @db.VarChar(64)
+  issuer          String    @default("") @db.VarChar(512)
+  subject         String    @db.VarChar(512)
+  loginIdentifier String?   @map("login_identifier") @db.VarChar(320)
+  verifiedAt      DateTime? @map("verified_at") @db.Timestamptz(6)
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@unique([provider, issuer, subject], map: "user_identities_provider_issuer_subject_key")
+  @@index([userId], map: "user_identities_user_id_idx")
+  @@map("user_identities")
+  @@schema("pmcs")
+}
+
+model PasswordCredential {
+  userId       String   @id @map("user_id") @db.Uuid
+  passwordHash String   @map("password_hash") @db.VarChar(1024)
+  algorithm    String   @default("argon2id") @db.VarChar(64)
+  changedAt    DateTime @default(now()) @map("changed_at") @db.Timestamptz(6)
+  mustRotate   Boolean  @default(false) @map("must_rotate")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@map("password_credentials")
+  @@schema("pmcs")
+}
+
+model AuthSession {
+  id               String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId           String    @map("user_id") @db.Uuid
+  refreshTokenHash String    @unique(map: "auth_sessions_refresh_token_hash_key") @map("refresh_token_hash") @db.VarChar(512)
+  expiresAt        DateTime  @map("expires_at") @db.Timestamptz(6)
+  revokedAt        DateTime? @map("revoked_at") @db.Timestamptz(6)
+  replacedById     String?   @map("replaced_by_id") @db.Uuid
+  ipAddress        String?   @map("ip_address") @db.VarChar(64)
+  userAgent        String?   @map("user_agent") @db.VarChar(1024)
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  lastSeenAt       DateTime? @map("last_seen_at") @db.Timestamptz(6)
+
+  user       User         @relation(fields: [userId], references: [id], onDelete: Restrict)
+  replacedBy AuthSession? @relation("SessionRotation", fields: [replacedById], references: [id], onDelete: Restrict)
+  replaces   AuthSession[] @relation("SessionRotation")
+
+  @@index([userId, expiresAt], map: "auth_sessions_user_expiry_idx")
+  @@map("auth_sessions")
+  @@schema("pmcs")
+}
+
+model MfaFactor {
+  id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId       String    @map("user_id") @db.Uuid
+  factorType   String    @map("factor_type") @db.VarChar(32)
+  label        String?   @db.VarChar(128)
+  secretCipher String?   @map("secret_cipher") @db.VarChar(4096)
+  credentialId String?   @map("credential_id") @db.VarChar(1024)
+  publicKey    String?   @map("public_key") @db.VarChar(8192)
+  verifiedAt   DateTime? @map("verified_at") @db.Timestamptz(6)
+  disabledAt   DateTime? @map("disabled_at") @db.Timestamptz(6)
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@index([userId, factorType], map: "mfa_factors_user_type_idx")
+  @@map("mfa_factors")
+  @@schema("pmcs")
+}
+
+// ---------------------------------------------------------------------------
+// Organization and RBAC. All organization-owned models include organizationId
+// and expose a composite (organizationId, id) candidate key for tenant-safe
+// foreign keys from children.
+// ---------------------------------------------------------------------------
+
+model Organization {
+  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  slug            String   @unique(map: "organizations_slug_key") @db.VarChar(100)
+  legalName       String   @map("legal_name") @db.VarChar(300)
+  displayName     String   @map("display_name") @db.VarChar(300)
+  defaultCurrency String   @default("USD") @map("default_currency") @db.Char(3)
+  status          String   @default("active") @db.VarChar(32)
+  settings        Json     @db.JsonB
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  departments          Department[]
+  locations            Location[]
+  teams                Team[]
+  memberships          OrganizationMembership[]
+  roles                Role[]
+  portfolios           Portfolio[]
+  projects             Project[]
+  resources            Resource[]
+  auditEvents          AuditEvent[]
+  outboxEvents         OutboxEvent[]
+
+  @@index([status], map: "organizations_status_idx")
+  @@map("organizations")
+  @@schema("pmcs")
+}
+
+model Department {
+  id             String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId String    @map("organization_id") @db.Uuid
+  code           String    @db.VarChar(64)
+  name           String    @db.VarChar(200)
+  description    String?
+  deletedAt      DateTime? @map("deleted_at") @db.Timestamptz(6)
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  organization Organization               @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  teams        Team[]
+  memberships  OrganizationMembership[]
+  resources    Resource[]
+
+  @@unique([organizationId, id], map: "departments_organization_id_id_key")
+  @@unique([organizationId, code], map: "departments_organization_code_key")
+  @@index([organizationId, deletedAt], map: "departments_org_deleted_idx")
+  @@map("departments")
+  @@schema("pmcs")
+}
+
+model Location {
+  id             String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId String    @map("organization_id") @db.Uuid
+  code           String    @db.VarChar(64)
+  name           String    @db.VarChar(200)
+  timeZone       String?   @map("time_zone") @db.VarChar(100)
+  countryCode    String?   @map("country_code") @db.Char(2)
+  deletedAt      DateTime? @map("deleted_at") @db.Timestamptz(6)
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+
+  @@unique([organizationId, id], map: "locations_organization_id_id_key")
+  @@unique([organizationId, code], map: "locations_organization_code_key")
+  @@index([organizationId, deletedAt], map: "locations_org_deleted_idx")
+  @@map("locations")
+  @@schema("pmcs")
+}
+
+model Team {
+  id             String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId String    @map("organization_id") @db.Uuid
+  departmentId   String?   @map("department_id") @db.Uuid
+  code           String    @db.VarChar(64)
+  name           String    @db.VarChar(200)
+  deletedAt      DateTime? @map("deleted_at") @db.Timestamptz(6)
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  department   Department?  @relation(fields: [organizationId, departmentId], references: [organizationId, id], onDelete: Restrict)
+  memberships  TeamMembership[]
+  resources    Resource[]
+
+  @@unique([organizationId, id], map: "teams_organization_id_id_key")
+  @@unique([organizationId, code], map: "teams_organization_code_key")
+  @@index([organizationId, departmentId], map: "teams_org_department_idx")
+  @@map("teams")
+  @@schema("pmcs")
+}
+
+model OrganizationMembership {
+  id             String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId String    @map("organization_id") @db.Uuid
+  userId         String    @map("user_id") @db.Uuid
+  departmentId   String?   @map("department_id") @db.Uuid
+  status         String    @default("active") @db.VarChar(32)
+  joinedAt       DateTime  @default(now()) @map("joined_at") @db.Timestamptz(6)
+  endedAt        DateTime? @map("ended_at") @db.Timestamptz(6)
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  organization       Organization        @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  user               User                @relation(fields: [userId], references: [id], onDelete: Restrict)
+  department         Department?         @relation(fields: [organizationId, departmentId], references: [organizationId, id], onDelete: Restrict)
+  membershipRoles    MembershipRole[]
+  teamMemberships    TeamMembership[]
+  projectMembers     ProjectMember[]
+  resource           Resource?           @relation("ResourceMembership")
+  sponsoredProjects  Project[]           @relation("ProjectSponsor")
+  managedProjects    Project[]           @relation("ProjectManager")
+  ownedPortfolios    Portfolio[]         @relation("PortfolioOwner")
+  ownedWbsItems      WbsItem[]           @relation("WbsOwner")
+  ownedTasks         Task[]              @relation("TaskOwner")
+  ownedMilestones    Milestone[]         @relation("MilestoneOwner")
+  createdBaselines   Baseline[]          @relation("BaselineCreator")
+  frozenBaselines    Baseline[]          @relation("BaselineFreezer")
+  approvedBaselines  Baseline[]          @relation("BaselineApprover")
+  auditEvents        AuditEvent[]        @relation("AuditActorMembership")
+
+  @@unique([organizationId, id], map: "organization_memberships_org_id_id_key")
+  @@unique([organizationId, userId], map: "organization_memberships_org_user_key")
+  @@index([userId, status], map: "organization_memberships_user_status_idx")
+  @@index([organizationId, departmentId], map: "organization_memberships_org_department_idx")
+  @@map("organization_memberships")
+  @@schema("pmcs")
+}
+
+model Permission {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  code        String   @unique(map: "permissions_code_key") @db.VarChar(160)
+  description String   @db.VarChar(500)
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  rolePermissions RolePermission[]
+
+  @@map("permissions")
+  @@schema("pmcs")
+}
+
+model Role {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId String   @map("organization_id") @db.Uuid
+  code           String   @db.VarChar(100)
+  name           String   @db.VarChar(200)
+  description    String?  @db.VarChar(500)
+  isSystem       Boolean  @default(false) @map("is_system")
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  organization    Organization     @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  rolePermissions RolePermission[]
+  membershipRoles MembershipRole[]
+
+  @@unique([organizationId, id], map: "roles_organization_id_id_key")
+  @@unique([organizationId, code], map: "roles_organization_code_key")
+  @@index([organizationId, isSystem], map: "roles_org_system_idx")
+  @@map("roles")
+  @@schema("pmcs")
+}
+
+model RolePermission {
+  organizationId String @map("organization_id") @db.Uuid
+  roleId         String @map("role_id") @db.Uuid
+  permissionId   String @map("permission_id") @db.Uuid
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  role       Role       @relation(fields: [organizationId, roleId], references: [organizationId, id], onDelete: Restrict)
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Restrict)
+
+  @@id([organizationId, roleId, permissionId])
+  @@index([permissionId], map: "role_permissions_permission_idx")
+  @@map("role_permissions")
+  @@schema("pmcs")
+}
+
+model MembershipRole {
+  organizationId String   @map("organization_id") @db.Uuid
+  membershipId   String   @map("membership_id") @db.Uuid
+  roleId         String   @map("role_id") @db.Uuid
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  membership OrganizationMembership @relation(fields: [organizationId, membershipId], references: [organizationId, id], onDelete: Restrict)
+  role       Role                   @relation(fields: [organizationId, roleId], references: [organizationId, id], onDelete: Restrict)
+
+  @@id([organizationId, membershipId, roleId])
+  @@index([organizationId, roleId], map: "membership_roles_org_role_idx")
+  @@map("membership_roles")
+  @@schema("pmcs")
+}
+
+model TeamMembership {
+  organizationId String   @map("organization_id") @db.Uuid
+  teamId         String   @map("team_id") @db.Uuid
+  membershipId   String   @map("membership_id") @db.Uuid
+  joinedAt       DateTime @default(now()) @map("joined_at") @db.Timestamptz(6)
+  leftAt         DateTime? @map("left_at") @db.Timestamptz(6)
+
+  team       Team                   @relation(fields: [organizationId, teamId], references: [organizationId, id], onDelete: Restrict)
+  membership OrganizationMembership @relation(fields: [organizationId, membershipId], references: [organizationId, id], onDelete: Restrict)
+
+  @@id([organizationId, teamId, membershipId])
+  @@index([organizationId, membershipId], map: "team_memberships_org_member_idx")
+  @@map("team_memberships")
+  @@schema("pmcs")
+}
+
+// ---------------------------------------------------------------------------
+// Portfolio, project, people, and project health.
+// ---------------------------------------------------------------------------
+
+model Portfolio {
+  id                String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId    String    @map("organization_id") @db.Uuid
+  parentPortfolioId String?   @map("parent_portfolio_id") @db.Uuid
+  ownerMembershipId String?   @map("owner_membership_id") @db.Uuid
+  code              String    @db.VarChar(64)
+  name              String    @db.VarChar(200)
+  status            String    @default("active") @db.VarChar(32)
+  description       String?
+  version           Int       @default(1)
+  deletedAt         DateTime? @map("deleted_at") @db.Timestamptz(6)
+  createdAt         DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  organization Organization        @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  parent       Portfolio?          @relation("PortfolioHierarchy", fields: [organizationId, parentPortfolioId], references: [organizationId, id], onDelete: Restrict)
+  children     Portfolio[]         @relation("PortfolioHierarchy")
+  owner        OrganizationMembership? @relation("PortfolioOwner", fields: [organizationId, ownerMembershipId], references: [organizationId, id], onDelete: Restrict)
+  projects     Project[]
+
+  @@unique([organizationId, id], map: "portfolios_organization_id_id_key")
+  @@unique([organizationId, code], map: "portfolios_organization_code_key")
+  @@index([organizationId, parentPortfolioId, status], map: "portfolios_org_parent_status_idx")
+  @@map("portfolios")
+  @@schema("pmcs")
+}
+
+model Project {
+  id                  String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId      String    @map("organization_id") @db.Uuid
+  portfolioId         String?   @map("portfolio_id") @db.Uuid
+  sponsorMembershipId String?   @map("sponsor_membership_id") @db.Uuid
+  managerMembershipId String?   @map("manager_membership_id") @db.Uuid
+  code                String    @db.VarChar(64)
+  name                String    @db.VarChar(300)
+  description         String?
+  objectives          String?
+  scope               String?
+  lifecycleStatus     String    @default("proposed") @map("lifecycle_status") @db.VarChar(32)
+  priority            String    @default("medium") @db.VarChar(32)
+  health              String    @default("green") @db.VarChar(32)
+  currency            String    @default("USD") @db.Char(3)
+  plannedStartDate    DateTime? @map("planned_start_date") @db.Date
+  plannedFinishDate   DateTime? @map("planned_finish_date") @db.Date
+  actualStartDate     DateTime? @map("actual_start_date") @db.Date
+  actualFinishDate    DateTime? @map("actual_finish_date") @db.Date
+  version             Int       @default(1)
+  deletedAt           DateTime? @map("deleted_at") @db.Timestamptz(6)
+  createdAt           DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt           DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  organization       Organization        @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  portfolio          Portfolio?          @relation(fields: [organizationId, portfolioId], references: [organizationId, id], onDelete: Restrict)
+  sponsor            OrganizationMembership? @relation("ProjectSponsor", fields: [organizationId, sponsorMembershipId], references: [organizationId, id], onDelete: Restrict)
+  manager            OrganizationMembership? @relation("ProjectManager", fields: [organizationId, managerMembershipId], references: [organizationId, id], onDelete: Restrict)
+  members            ProjectMember[]
+  phases             ProjectPhase[]
+  healthSnapshots    ProjectHealthSnapshot[]
+  wbsItems           WbsItem[]
+  tasks              Task[]
+  taskDependencies   TaskDependency[]
+  taskAssignments    TaskAssignment[]
+  milestones         Milestone[]
+  baselines          Baseline[]
+
+  @@unique([organizationId, id], map: "projects_organization_id_id_key")
+  @@unique([organizationId, code], map: "projects_organization_code_key")
+  @@index([organizationId, portfolioId, lifecycleStatus, updatedAt(sort: Desc)], map: "projects_org_portfolio_status_updated_idx")
+  @@index([organizationId, managerMembershipId, lifecycleStatus], map: "projects_org_manager_status_idx")
+  @@map("projects")
+  @@schema("pmcs")
+}
+
+model ProjectMember {
+  id             String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId String    @map("organization_id") @db.Uuid
+  projectId      String    @map("project_id") @db.Uuid
+  membershipId   String    @map("membership_id") @db.Uuid
+  membershipRole String    @default("member") @map("membership_role") @db.VarChar(64)
+  joinedAt       DateTime  @default(now()) @map("joined_at") @db.Timestamptz(6)
+  leftAt         DateTime? @map("left_at") @db.Timestamptz(6)
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  project    Project                @relation(fields: [organizationId, projectId], references: [organizationId, id], onDelete: Restrict)
+  membership OrganizationMembership @relation(fields: [organizationId, membershipId], references: [organizationId, id], onDelete: Restrict)
+
+  @@unique([organizationId, id], map: "project_members_organization_id_id_key")
+  @@unique([organizationId, projectId, membershipId], map: "project_members_org_project_member_key")
+  @@index([organizationId, membershipId, leftAt], map: "project_members_org_member_left_idx")
+  @@map("project_members")
+  @@schema("pmcs")
+}
+
+model ProjectPhase {
+  id             String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId String    @map("organization_id") @db.Uuid
+  projectId      String    @map("project_id") @db.Uuid
+  code           String    @db.VarChar(64)
+  name           String    @db.VarChar(200)
+  sortOrder      Int       @default(0) @map("sort_order")
+  status         String    @default("planned") @db.VarChar(32)
+  plannedStartDate  DateTime? @map("planned_start_date") @db.Date
+  plannedFinishDate DateTime? @map("planned_finish_date") @db.Date
+  actualStartDate   DateTime? @map("actual_start_date") @db.Date
+  actualFinishDate  DateTime? @map("actual_finish_date") @db.Date
+  version           Int       @default(1)
+  deletedAt         DateTime? @map("deleted_at") @db.Timestamptz(6)
+  createdAt         DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  project    Project     @relation(fields: [organizationId, projectId], references: [organizationId, id], onDelete: Restrict)
+  wbsItems   WbsItem[]
+  milestones Milestone[]
+
+  @@unique([organizationId, id], map: "project_phases_organization_id_id_key")
+  @@unique([organizationId, projectId, id], map: "project_phases_org_project_id_key")
+  @@unique([organizationId, projectId, code], map: "project_phases_org_project_code_key")
+  @@index([organizationId, projectId, sortOrder], map: "project_phases_org_project_order_idx")
+  @@map("project_phases")
+  @@schema("pmcs")
+}
+
+model ProjectHealthSnapshot {
+  id               String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId   String   @map("organization_id") @db.Uuid
+  projectId        String   @map("project_id") @db.Uuid
+  calculatedAt     DateTime @default(now()) @map("calculated_at") @db.Timestamptz(6)
+  ruleSetVersion   Int      @map("rule_set_version")
+  scheduleHealth   String   @map("schedule_health") @db.VarChar(16)
+  budgetHealth     String   @map("budget_health") @db.VarChar(16)
+  scopeHealth      String   @map("scope_health") @db.VarChar(16)
+  resourceHealth   String   @map("resource_health") @db.VarChar(16)
+  riskHealth       String   @map("risk_health") @db.VarChar(16)
+  overallHealth    String   @map("overall_health") @db.VarChar(16)
+  score            Decimal? @db.Decimal(5, 2)
+  metrics          Json     @db.JsonB
+  sourceWatermark  String?  @map("source_watermark") @db.VarChar(256)
+
+  project Project @relation(fields: [organizationId, projectId], references: [organizationId, id], onDelete: Restrict)
+
+  @@unique([organizationId, id], map: "project_health_snapshots_org_id_id_key")
+  @@index([organizationId, projectId, calculatedAt(sort: Desc)], map: "project_health_snapshots_org_project_calc_idx")
+  @@map("project_health_snapshots")
+  @@schema("pmcs")
+}
+
+model Resource {
+  id             String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId String    @map("organization_id") @db.Uuid
+  membershipId   String?   @map("membership_id") @db.Uuid
+  departmentId   String?   @map("department_id") @db.Uuid
+  teamId         String?   @map("team_id") @db.Uuid
+  resourceType   String    @map("resource_type") @db.VarChar(32)
+  displayName    String    @map("display_name") @db.VarChar(300)
+  activeFrom     DateTime? @map("active_from") @db.Date
+  activeTo       DateTime? @map("active_to") @db.Date
+  deletedAt      DateTime? @map("deleted_at") @db.Timestamptz(6)
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  organization Organization                @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  membership   OrganizationMembership?     @relation("ResourceMembership", fields: [organizationId, membershipId], references: [organizationId, id], onDelete: Restrict)
+  department   Department?                  @relation(fields: [organizationId, departmentId], references: [organizationId, id], onDelete: Restrict)
+  team         Team?                        @relation(fields: [organizationId, teamId], references: [organizationId, id], onDelete: Restrict)
+  assignments  TaskAssignment[]
+
+  @@unique([organizationId, id], map: "resources_organization_id_id_key")
+  @@unique([organizationId, membershipId], map: "resources_org_membership_key")
+  @@index([organizationId, resourceType, deletedAt], map: "resources_org_type_deleted_idx")
+  @@map("resources")
+  @@schema("pmcs")
+}

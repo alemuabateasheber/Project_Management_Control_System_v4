@@ -10,12 +10,12 @@
   },
   "dependencies": {
     "@vitejs/plugin-react": "latest",
-    "vite": "latest",
+    "lucide-react": "latest",
+    "opencode-ai": "^1.18.25",
     "react": "latest",
     "react-dom": "latest",
-    "lucide-react": "latest",
     "recharts": "latest",
+    "vite": "latest",
     "xlsx": "latest"
-  },
-  "devDependencies": {}
+  }
 }
