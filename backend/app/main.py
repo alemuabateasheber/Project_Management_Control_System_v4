@@ -93,6 +93,11 @@ async def shutdown_event():
 def json_safe(v): return v.isoformat() if isinstance(v,datetime) else v
 def audit(s,u,action,etype,eid,before=None,after=None,ip=None): s.add(AuditLog(user_id=u.id,action=action,entity_type=etype,entity_id=eid,before_data=before,after_data=after,ip_address=ip))
 def notify(s,user_id,title,message,typ='info'): s.add(Notification(user_id=user_id,title=title,message=message,type=typ))
+CONTROLLED_RECORD_STATUSES = frozenset({'pending_approval', 'approved'})
+
+def reject_direct_status_change(requested_status:str, current_status:str='draft'):
+    if requested_status != current_status:
+        raise HTTPException(409, 'Record status changes must use the approval workflow')
 
 def seed_admin():
     s=SessionLocal()
@@ -197,7 +202,8 @@ def list_records(module:str,limit:int=Query(500,le=2000),offset:int=0,status:Opt
     return [{'id':r.id,'external_id':r.external_id,'data':r.data,'status':r.status,'version':r.version,'updated_at':r.updated_at} for r in rs]
 @app.post('/api/records/{module}', tags=['Records'])
 def create_record(module:str,body:RecordIn,u=Depends(require('editor','project_manager','approver','admin')),s:Session=Depends(db)):
-    r=Record(module=module,external_id=body.external_id,data=body.data,status=body.status,created_by=u.id);s.add(r);s.flush();audit(s,u,'CREATE','record',r.id,None,body.data);s.commit()
+    reject_direct_status_change(body.status)
+    r=Record(module=module,external_id=body.external_id,data=body.data,status='draft',created_by=u.id);s.add(r);s.flush();audit(s,u,'CREATE','record',r.id,None,body.data);s.commit()
     logger.info(f"Record created in module {module} by user {u.username}")
     return {'id':r.id,'version':r.version,'data':r.data,'status':r.status}
 @app.put('/api/records/{module}/{record_id}', tags=['Records'])
@@ -206,10 +212,10 @@ def update_record(module:str,record_id:str,body:RecordIn,u=Depends(require('edit
     if not r or r.module!=module: 
         logger.warning(f"Record not found for update: {record_id} in module {module}")
         raise HTTPException(404,'Record not found')
-    if r.status=='approved' and u.role not in ('approver','admin'): 
-        logger.warning(f"Unauthorized attempt to update approved record {record_id} by user {u.username}")
-        raise HTTPException(409,'Approved records require approver/admin')
-    before=r.data;r.data=body.data;r.external_id=body.external_id;r.status=body.status;r.version+=1;audit(s,u,'UPDATE','record',r.id,before,body.data);s.commit()
+    if r.status in CONTROLLED_RECORD_STATUSES:
+        raise HTTPException(409, 'Approved or pending-approval records cannot be edited directly')
+    reject_direct_status_change(body.status, r.status)
+    before=r.data;r.data=body.data;r.external_id=body.external_id;r.version+=1;audit(s,u,'UPDATE','record',r.id,before,body.data);s.commit()
     logger.info(f"Record updated: {record_id} in module {module} by user {u.username}")
     return {'id':r.id,'version':r.version,'data':r.data,'status':r.status}
 @app.delete('/api/records/{module}/{record_id}', tags=['Records'])
@@ -218,6 +224,8 @@ def delete_record(module:str,record_id:str,u=Depends(require('project_manager','
     if not r or r.module!=module: 
         logger.warning(f"Record not found for deletion: {record_id} in module {module}")
         raise HTTPException(404,'Record not found')
+    if r.status in CONTROLLED_RECORD_STATUSES:
+        raise HTTPException(409, 'Approved or pending-approval records cannot be deleted')
     audit(s,u,'DELETE','record',r.id,r.data,None);s.delete(r);s.commit()
     logger.info(f"Record deleted: {record_id} in module {module} by user {u.username}")
     return {'deleted':record_id}
@@ -231,6 +239,10 @@ def request_approval(record_id:str,body:ApprovalIn,u=Depends(require('editor','p
     if body.approver_role not in ('approver','admin'):
         logger.warning(f"Invalid approver role attempted: {body.approver_role}")
         raise HTTPException(400,'Invalid approver role')
+    if r.status in CONTROLLED_RECORD_STATUSES:
+        raise HTTPException(409, 'Record already has an active or completed approval')
+    if s.scalar(select(Approval.id).where(Approval.record_id==record_id, Approval.status=='pending')):
+        raise HTTPException(409, 'Record already has a pending approval')
     a=Approval(record_id=record_id,requested_by=u.id,approver_role=body.approver_role,comment=body.comment);s.add(a);s.flush()
     r.status='pending_approval'
     targets=s.scalars(select(User).where(User.active==True,User.role.in_([body.approver_role,'admin']))).all()
@@ -252,6 +264,10 @@ def decide(approval_id:str,body:DecisionIn,u=Depends(require('approver','admin')
     if not a or a.status!='pending':
         logger.warning(f"Pending approval not found: {approval_id}")
         raise HTTPException(404,'Pending approval not found')
+    if a.requested_by == u.id:
+        raise HTTPException(403, 'A requester cannot decide their own approval')
+    if u.role != 'admin' and u.role != a.approver_role:
+        raise HTTPException(403, 'Approval requires the assigned approver role')
     a.status=body.status;a.comment=body.comment;a.decided_at=datetime.now(timezone.utc);r=s.get(Record,a.record_id)
     if r:r.status=body.status
     notify(s,a.requested_by,'Approval decision',f'Record {a.record_id} was {body.status}.','approval')
@@ -289,7 +305,10 @@ def import_workbook(file:UploadFile=File(...),u=Depends(require('project_manager
         for row in rows:
             ext=next((str(row[k]) for k in keys if k in row and row[k] is not None),None)
             existing=s.scalar(select(Record).where(Record.module==ws.title,Record.external_id==ext)) if ext else None
-            if existing:before=existing.data;existing.data=row;existing.version+=1;audit(s,u,'IMPORT_UPDATE','record',existing.id,before,row)
+            if existing:
+                if existing.status in CONTROLLED_RECORD_STATUSES:
+                    raise HTTPException(409, f'Cannot import over {existing.status} record {existing.id}')
+                before=existing.data;existing.data=row;existing.version+=1;audit(s,u,'IMPORT_UPDATE','record',existing.id,before,row)
             else:r=Record(module=ws.title,external_id=ext,data=row,status='draft',created_by=u.id);s.add(r);s.flush();audit(s,u,'IMPORT_CREATE','record',r.id,None,row)
         summary.append({'module':ws.title,'rows':len(rows)})
     audit(s,u,'IMPORT_WORKBOOK','workbook',None,None,{'filename':file.filename,'sheets':summary});s.commit();return {'file':file.filename,'sheets':summary}
@@ -363,8 +382,14 @@ def sync_upsert(payload:list[dict],u=Depends(require('editor','project_manager',
         module=item.get('module');ext=item.get('external_id');data=item.get('data',{})
         if not module:continue
         r=s.scalar(select(Record).where(Record.module==module,Record.external_id==ext)) if ext else None
-        if r:before=r.data;r.data=data;r.version+=1;r.status=item.get('status',r.status);audit(s,u,'SYNC_UPDATE','record',r.id,before,data);results.append({'id':r.id,'action':'updated'})
-        else:r=Record(module=module,external_id=ext,data=data,status=item.get('status','draft'),created_by=u.id);s.add(r);s.flush();audit(s,u,'SYNC_CREATE','record',r.id,None,data);results.append({'id':r.id,'action':'created'})
+        if r:
+            if r.status in CONTROLLED_RECORD_STATUSES:
+                raise HTTPException(409, f'Cannot synchronize over {r.status} record {r.id}')
+            requested_status=item.get('status',r.status);reject_direct_status_change(requested_status,r.status)
+            before=r.data;r.data=data;r.version+=1;audit(s,u,'SYNC_UPDATE','record',r.id,before,data);results.append({'id':r.id,'action':'updated'})
+        else:
+            reject_direct_status_change(item.get('status','draft'))
+            r=Record(module=module,external_id=ext,data=data,status='draft',created_by=u.id);s.add(r);s.flush();audit(s,u,'SYNC_CREATE','record',r.id,None,data);results.append({'id':r.id,'action':'created'})
     s.commit();return {'results':results,'count':len(results)}
 
 

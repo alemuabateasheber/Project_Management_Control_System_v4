@@ -32,10 +32,13 @@
     "format": "prisma format --schema prisma/schema.prisma",
     "migrate:dev": "prisma migrate dev --schema prisma/schema.prisma",
     "migrate:deploy": "prisma migrate deploy --schema prisma/schema.prisma",
+    "migrate:hardening": "psql \"$DATABASE_URL\" -v ON_ERROR_STOP=1 -f prisma/sql/001-foundation-hardening.sql",
+    "db:seed": "node prisma/seed.js",
     "studio": "prisma studio --schema prisma/schema.prisma"
   },
   "dependencies": {
-    "@prisma/client": "6.16.2"
+    "@prisma/client": "6.16.2",
+    "argon2": "0.41.1"
   },
   "devDependencies": {
     "@types/node": "22.15.3",

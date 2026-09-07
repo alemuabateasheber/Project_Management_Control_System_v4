@@ -3,8 +3,6 @@
 import {
   BarChart3,
   BriefcaseBusiness,
-  ClipboardCheck,
-  FileBarChart2,
   FolderKanban,
   LayoutDashboard,
   Settings,
@@ -24,8 +22,6 @@ export function AppSidebar({ organizationSlug, organizationName }: AppSidebarPro
   const navigation = [
     { label: 'Portfolio', href: projectPath, icon: LayoutDashboard, exact: true },
     { label: 'Projects', href: projectPath, icon: FolderKanban, exact: false },
-    { label: 'My work', href: `${projectPath}/digital-service-modernisation/schedule`, icon: ClipboardCheck, exact: false },
-    { label: 'Reports', href: `${projectPath}/digital-service-modernisation/activity`, icon: FileBarChart2, exact: false },
   ];
 
   return (

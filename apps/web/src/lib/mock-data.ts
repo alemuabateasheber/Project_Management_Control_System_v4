@@ -74,10 +74,10 @@ export const demoOrganization = {
 
 export const demoProjects: readonly DemoProject[] = [
   {
-    id: 'digital-service-modernisation',
-    code: 'DSM-2026',
-    name: 'Digital Service Modernisation',
-    description: 'Replace fragmented case-management workflows with a secure, unified service platform.',
+    id: 'digital-service-high-tech-incubation-2026',
+    code: 'DSHI-2026',
+    name: 'Digital Service & High-Tech Incubation Project 2026',
+    description: 'Deliver secure digital services while establishing an integrated high-tech incubation ecosystem.',
     status: 'Active',
     health: 'amber',
     manager: 'Mekdes Tadesse',

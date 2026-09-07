@@ -2,9 +2,9 @@ services:
   db:
     image: postgres:17
     environment:
-      POSTGRES_DB: mint_aics_pmo
-      POSTGRES_USER: mint
-      POSTGRES_PASSWORD: mint
+      POSTGRES_DB: ${POSTGRES_DB:?Set POSTGRES_DB in .env}
+      POSTGRES_USER: ${POSTGRES_USER:?Set POSTGRES_USER in .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
     volumes: [postgres_data:/var/lib/postgresql/data]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U mint -d mint_aics_pmo"]
@@ -25,10 +25,10 @@ services:
     env_file: .env
     depends_on:
       db: {condition: service_healthy}
-    ports: ["8001:8000"]
+    ports: ["${API_BIND_ADDRESS:-127.0.0.1}:8001:8000"]
     volumes: [reports:/app/reports]
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health', timeout=5)"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -47,7 +47,7 @@ services:
       context: .
       dockerfile: Dockerfile.web
     depends_on: [api]
-    ports: ["8081:80"]
+    ports: ["${WEB_BIND_ADDRESS:-127.0.0.1}:8081:80"]
     healthcheck:
       test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost/health"]
       interval: 30s
