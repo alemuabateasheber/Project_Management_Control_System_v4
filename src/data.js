@@ -1486,13 +1486,13 @@ export const seedData = {
     }
   ],
   "Project Charter": {
-    "Project Title": "Supporting the Strengthening of Digital Services in Ethiopia through the Creation of an Incubation Center for High-Technology Innovation Enterprises",
+    "Project Title": "Digital Service & High-Tech Incubation Project 2026",
     "Implementing Institution": "Ministry of Innovation and Technology (MInT), Ethiopia",
     "Donor": "Government of Italy",
     "Supervising Agency": "Italian Agency for Development Cooperation (AICS)",
     "Project Type": "Digital Transformation / E-Government / High-Technology Innovation / Startup Incubation",
     "Geographic Scope": "Ethiopia",
-    "Project Description": "Integrated strengthening of electronic service delivery and creation of a high-technology innovation incubation ecosystem.",
+    "Project Description": "Integrated strengthening of digital services and creation of a high-technology innovation incubation ecosystem.",
     "Strategic Objective": "Strengthen digital public services and enable high-technology innovation enterprises through incubation, capacity building, technology enablement and enterprise support.",
     "Start Date": "2026-09-01",
     "Planned Finish Date": "2029-08-31",
