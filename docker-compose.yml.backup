@@ -5,8 +5,7 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:?Set POSTGRES_DB in .env}
       POSTGRES_USER: ${POSTGRES_USER:?Set POSTGRES_USER in .env}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
+    volumes: [postgres_data:/var/lib/postgresql/data]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U mint -d mint_aics_pmo"]
       interval: 5s
@@ -16,22 +15,18 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "1.0"
+          cpus: '1.0'
           memory: 1G
         reservations:
-          cpus: "0.5"
+          cpus: '0.5'
           memory: 512M
-
   api:
     build: ./backend
     env_file: .env
     depends_on:
-      db:
-        condition: service_healthy
-    ports:
-      - "${API_BIND_ADDRESS:-127.0.0.1}:8001:8000"
-    volumes:
-      - reports:/app/reports
+      db: {condition: service_healthy}
+    ports: ["${API_BIND_ADDRESS:-127.0.0.1}:8001:8000"]
+    volumes: [reports:/app/reports]
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health', timeout=5)"]
       interval: 30s
@@ -42,20 +37,17 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "1.0"
+          cpus: '1.0'
           memory: 512M
         reservations:
-          cpus: "0.5"
+          cpus: '0.5'
           memory: 256M
-
   web:
     build:
       context: .
       dockerfile: Dockerfile.web
-    depends_on:
-      - api
-    ports:
-      - "${WEB_BIND_ADDRESS:-127.0.0.1}:8081:80"
+    depends_on: [api]
+    ports: ["${WEB_BIND_ADDRESS:-127.0.0.1}:8081:80"]
     healthcheck:
       test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost/health"]
       interval: 30s
@@ -66,24 +58,22 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "0.5"
+          cpus: '0.5'
           memory: 256M
         reservations:
-          cpus: "0.25"
+          cpus: '0.25'
           memory: 128M
-
-  pgadmin:
+volumes:
+  postgres_data:
+  reports:
+ pgadmin:
     image: dpage/pgadmin4:latest
     environment:
-      PGADMIN_DEFAULT_EMAIL: admin@example.com
+      PGADMIN_DEFAULT_EMAIL: admin@pmcs.local
       PGADMIN_DEFAULT_PASSWORD: F@cku2026
     ports:
       - "127.0.0.1:5050:80"
     depends_on:
       db:
         condition: service_healthy
-    restart: unless-stopped
-
-volumes:
-  postgres_data:
-  reports:
+    restart: unless-stopped  
